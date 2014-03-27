@@ -187,7 +187,7 @@ module FakeFtp
       respond_with('150 Listing status ok, about to open data connection')
       data_client = active? ? @active_connection : @data_server.accept
 
-      data_client.write(files.join("\n"))
+      data_client.write(files.map{|file| "#{file}\n"}.join)
       data_client.close
       @active_connection = nil
 
