@@ -70,13 +70,16 @@ module FakeFtp
             @client = @server.accept_nonblock
             if @client
               respond_with('220 Can has FTP?')
-              while @started && !@client.nil? && !@client.closed?
-                input = @client.gets rescue nil
-                respond_with parse(input) if input
-              end
-              unless @client.nil?
-                @client.close unless @client.closed?
-                @client = nil
+              @connection = Thread.new(@client) do |socket|
+                while @started && !socket.nil? && !socket.closed?
+                  input = socket.gets rescue nil
+                  respond_with parse(input) if input
+                end
+
+                unless @client.nil?
+                  @client.close unless @client.closed?
+                  @client = nil
+                end
               end
             end
           end
