@@ -67,27 +67,23 @@ module FakeFtp
       @thread = Thread.new do
         begin
           while @started
-            @client = @server.accept rescue nil
+            @client = @server.accept_nonblock
             if @client
               respond_with('220 Can has FTP?')
-              @connection = Thread.new(@client) do |socket|
-                while @started && !socket.nil? && !socket.closed?
-                  input = socket.gets rescue nil
-                  respond_with parse(input) if input
-                end
-                unless @client.nil?
-                  @client.close unless @client.closed?
-                  @client = nil
-                end
+              while @started && !@client.nil? && !@client.closed?
+                input = @client.gets rescue nil
+                respond_with parse(input) if input
+              end
+              unless @client.nil?
+                @client.close unless @client.closed?
+                @client = nil
               end
             end
           end
         rescue IO::WaitReadable, Errno::EINTR
-          @server_started = true
-          IO.select([serv])
-          retry if @started
+          IO.select([@server], nil, nil, 0.2) rescue nil
+          retry
         end
-
         unless @server.nil?
           @server.close unless @server.closed?
           @server = nil
@@ -98,19 +94,16 @@ module FakeFtp
         @data_server = ::TCPServer.new('127.0.0.1', passive_port)
         @passive_port = @data_server.addr[1]
       end
-
-      10.times do
-        break if @server_started
-        sleep 0.2
-      end
     end
 
     def stop
       @started = false
-      @client.close if @client
-      @server.close if @server
+      @thread.join(5)
+      @client.close unless @client.nil? or @client.closed?
+      @client = nil
+      @server.close unless @server.nil? or @server.closed?
       @server = nil
-      @data_server.close if @data_server
+      @data_server.close unless @data_server.nil? or @data_server.closed?
       @data_server = nil
     end
 
@@ -285,8 +278,10 @@ module FakeFtp
     end
 
     def _stor(filename = '')
-      respond_with('425 Ain\'t no data port!') && return if active? && @active_connection.nil?
-
+      if active? && @active_connection.nil?
+        respond_with('425 Ain\'t no data port!') 
+        return
+      end
       respond_with('125 Do it!')
       data_client = active? ? @active_connection : @data_server.accept
 
