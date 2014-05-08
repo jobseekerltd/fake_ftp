@@ -331,18 +331,40 @@ describe FakeFtp::Server, 'commands' do
     end
 
     context 'active' do
-      let!(:data_server) { ::TCPServer.new('127.0.0.1', 21216) }
-
+      #let!(:data_server) { ::TCPServer.new('127.0.0.1', 21216) }
       before :each do
+        @running = true
+        @data_server = ::TCPServer.new('127.0.0.1', 21216)
         @data_connection = Thread.new do
-          @server_client = data_server.accept
+          begin
+            while (@running)
+              @server_client = @data_server.accept_nonblock
+            end
+          rescue IO::WaitReadable, Errno::EINTR
+            IO.select([@data_server], nil, nil, 0.2) rescue nil
+            retry
+          end
         end
       end
 
       after :each do
-        data_server.close
+        @running = false
+        @data_connection.join(3) unless @data_connection.nil?
+        @data_server.close
         @data_connection = nil
       end
+
+      #before :each do
+
+      #  @data_connection = Thread.new do
+      #    @server_client = data_server.accept
+      #  end
+      #end
+
+      #after :each do
+      #  data_server.close
+      #  @data_connection = nil
+      #end
 
       it 'creates a directory on MKD' do
         client.puts "MKD some_dir"
@@ -381,8 +403,8 @@ describe FakeFtp::Server, 'commands' do
 
         client.puts "STOR some_other_file"
         expect(client.gets).to eql("125 Do it!\r\n")
-
-        @data_connection.join
+        @running = false
+        @data_connection.join(3)
         @server_client.print "12345"
         @server_client.close
 
@@ -394,12 +416,12 @@ describe FakeFtp::Server, 'commands' do
       it "accepts RETR with a filename" do
         client.puts "PORT 127,0,0,1,82,224"
         expect(client.gets).to eql("200 Okay\r\n")
-
         server.add_file('some_file', '1234567890')
         client.puts "RETR some_file"
         expect(client.gets).to eql("150 File status ok, about to open data connection\r\n")
 
-        @data_connection.join
+        @running =false
+        @data_connection.join(3)
         data = @server_client.read(1024)
         @server_client.close
 
@@ -454,8 +476,8 @@ describe FakeFtp::Server, 'commands' do
         server.add_file('another_file', '1234567890')
         client.puts "NLST"
         expect(client.gets).to eql("150 Listing status ok, about to open data connection\r\n")
-
-        @data_connection.join
+        @running = false
+        @data_connection.join(3)
         data = @server_client.read(1024)
         @server_client.close
 
