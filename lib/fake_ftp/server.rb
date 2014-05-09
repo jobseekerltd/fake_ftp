@@ -36,7 +36,7 @@ module FakeFtp
       self.passive_port = data_port
       raise(Errno::EADDRINUSE, "#{port}") if !control_port.zero? && is_running?
       raise(Errno::EADDRINUSE, "#{passive_port}") if passive_port && !passive_port.zero? && is_running?(passive_port)
-      @connection = nil
+      @connections = []
       @options = options
       @files = []
       @mode = :active
@@ -69,16 +69,19 @@ module FakeFtp
           while @started
             @client = @server.accept_nonblock
             if @client
-              respond_with('220 Can has FTP?')
-              @connection = Thread.new(@client) do |socket|
-                while @started && !socket.nil? && !socket.closed?
-                  input = socket.gets rescue nil
-                  respond_with parse(input) if input
-                end
-
-                unless @client.nil?
-                  @client.close unless @client.closed?
-                  @client = nil
+              @connections << Thread.new(@client) do |socket|
+                begin
+                  Thread.current[:client] = socket
+                  respond_with('220 Can has FTP?')
+                  while @started && !t_client.nil? && !t_client.closed?
+                    input = t_client.gets rescue nil
+                    respond_with parse(input) if input
+                  end
+                ensure
+                  unless t_client.nil? or t_client.closed?
+                    t_client.close unless t_client.closed?
+                    Thread.current[:client] = nil
+                  end
                 end
               end
             end
@@ -86,6 +89,9 @@ module FakeFtp
         rescue IO::WaitReadable, Errno::EINTR
           IO.select([@server], nil, nil, 0.2) rescue nil
           retry
+        end
+        @connections.each do |c|
+          c.join(5)
         end
         unless @server.nil?
           @server.close unless @server.closed?
@@ -116,8 +122,12 @@ module FakeFtp
 
     private
 
+    def t_client
+      Thread.current[:client]
+    end
+
     def respond_with(stuff)
-      @client.print stuff << LNBK unless stuff.nil? or @client.nil? or @client.closed?
+      t_client.print stuff << LNBK unless stuff.nil? or t_client.nil? or t_client.closed?
     end
 
     def parse(request)
@@ -236,8 +246,8 @@ module FakeFtp
 
     def _quit(*args)
       respond_with '221 OMG bye!'
-      @client.close if @client
-      @client = nil
+      t_client.close if t_client
+      Thread.current[:client] = nil
     end
 
     def _retr(filename = '')
